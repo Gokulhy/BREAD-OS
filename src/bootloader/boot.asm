@@ -88,6 +88,13 @@ main:
 	mov ss, ax
 	mov sp, 0x7C00 
 
+	mov [ebr_drive_number],dl 
+
+	mov ax,1  		;LBA=1
+	mov cl,1  		;1 sector to read
+	mov bx,0x7E00	;data should be after bootloader
+	call disk_read
+
 	; Call the puts subroutine to print our message
 	mov si, msg_hello ; Load the address (offset) of msg_hello into SI
 	call puts         ; Call the puts subroutine
@@ -95,10 +102,18 @@ main:
 	hlt ; Halt the CPU - wait for interrupts.
         ; This is effectively the end of our boot sector's active execution.
 floppy_error:
-	hlt
+	mov si,read_msg_failed
+	call puts
+	jmp wait_key_and_reboot
+
+wait_key_and_reboot:
+	mov ah,0
+	int 16h			; wait for keypress
+	jmp 0FFFFh:0	;jump to the beginning of BIOS
+
 .halt:
-	jmp .halt ; If an interrupt wakes up the CPU, this loop keeps it stuck here
-              ; preventing it from executing random memory.
+	cli 			; disable interrupts
+	hlt
 
 		
 ; lba_to_chs: Converts LBA to CHS format for BIOS disk access
@@ -115,8 +130,8 @@ lba_to_chs:
 
     xor dx, dx             ; Clear dx for next division
     div word [bdb_heads]   ; ax = quotient (cylinder), dx = remainder (head)
-    mov dh, dl             ; Store head number in dh
-    mov ch, al             ; Store cylinder (low 8 bits) in ch
+    mov dh, dl             ; Store head number in dh. Since head numbers are small (< 256), they fit in dl (e.g., 0 or 1).
+    mov ch, al             ; Store cylinder (low 8 bits) in ch. The div instruction places the cylinder number in ax. Since cylinders are small, al holds the relevant value.
     shl ah, 6              ; Shift cylinder high bits (8-9) to cl bits 6-7
     or cl, ah              ; Combine sector and cylinder high bits in cl
 
@@ -125,34 +140,69 @@ lba_to_chs:
     pop ax                 ; Restore original ax
     ret                    ; Return with CHS in ch, cl, dh, dl
 
+
 disk_read:
+	push ax    ; Save LBA (from input)
+    push bx    ; Save memory offset (from input)
+    push cx    ; Save sectors to read (from input)
+    push dx    ; Save drive number (from input)
+    push di    ; Save DI (might be used internally or by BIOS)
+
 	push cx
 	call lba_to_chs
 	pop ax
 
-	mov ah, 02h
-	mov di, 3
+	 ; --- 3. Prepare for BIOS Disk Read (INT 13h, Function 02h) ---
+    mov ah, 02h     ; Set AH register to 02h. This tells BIOS INT 13h that we want to 'Read Sectors'.
+                    ; The necessary registers for INT 13h are:
+                    ;   AH = 02h (read function)
+                    ;   AL = number of sectors to read (from the 'pop ax' above)
+                    ;   CH = cylinder (low 8 bits)   (from lba_to_chs)
+                    ;   CL = sector + cylinder high bits (from lba_to_chs)
+                    ;   DH = head                     (from lba_to_chs)
+                    ;   DL = drive number             (from lba_to_chs)
+                    ;   ES:BX = memory buffer address (from input parameter)
+	mov di, 3		;retry counter.
 .retry:
-	pusha
-	stc
-	int 13h
-	jnc .done
+	pusha			;save all registers
+	stc				;set carry flag
+	int 13h			; Call BIOS Interrupt 13h. This is the instruction that tells the BIOS to
+                    ; perform the disk read using the parameters in AH, AL, CX, DX, ES:BX.
+	jnc .done 		;jump if carry flag not set
 	
-	popa
+	popa			; Pop ALL general-purpose registers to restore their state from before the failed INT 13h call.
 	call disk_reset
 
-	dec di
-	test di,di
-	jnz .retry
+	dec di			; Decrement our retry counter.
+	test di,di		; Test DI against itself. This sets the Zero Flag (ZF) if DI becomes 0.
+	jnz .retry		; Jump if Not Zero (ZF = 0). If DI is not 0, it means we still have retries left.
 .fail:
-	jmp floppy_error
+	jmp floppy_error ;jump to floppy_error if all 3 tries failed
 .done:
 	popa
+
+	push di
+	push dx
+	push cx
+	push bx
+	push ax
+	ret
+
+;reset disk_controller
+; dl:drive number
+disk_reset:
+	pusha
+	mov ah,0
+	stc
+	int 13h
+	jc floppy_error
+	popa
+	ret
 ; --- Data Section ---
 ; Our null-terminated string to be printed.
 ; Using NEWLINE constant we defined earlier.
 msg_hello: db 'BREAD OS', 0x0D, 0x0A, 0
-read_msg_failed:db 'Read from disk failed,0x0D, 0x0A, 0
+read_msg_failed:db 'Read from disk failed',0x0D, 0x0A, 0
 ; --- Boot Sector Signature and Padding ---
 ; Fill the rest of the 512-byte sector with zeros.
 ; ($ - $$) calculates the current size of the code and data from the beginning (0x7C00).

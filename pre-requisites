@@ -1,0 +1,8 @@
+make
+nasm
+qemu-system-x86 for testing
+bochs-x bochsbios vgabios for debugging
+
+sudo apt install bochs bochs-sdl
+
+

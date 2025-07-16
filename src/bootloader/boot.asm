@@ -179,15 +179,14 @@ disk_read:
 .fail:
 	jmp floppy_error ;jump to floppy_error if all 3 tries failed
 .done:
-	popa
+	popa            ; Pop ALL general-purpose registers (matching the pusha in .retry)
 
-	push di
-	push dx
-	push cx
-	push bx
-	push ax
-	ret
-
+    pop di          ; Restore DI (pushed at beginning of disk_read)
+    pop dx          ; Restore DX (pushed at beginning of disk_read)
+    pop cx          ; Restore CX (pushed at beginning of disk_read)
+    pop bx          ; Restore BX (pushed at beginning of disk_read)
+    pop ax          ; Restore AX (pushed at beginning of disk_read)
+    ret             ; Return from subroutine
 ;reset disk_controller
 ; dl:drive number
 disk_reset:

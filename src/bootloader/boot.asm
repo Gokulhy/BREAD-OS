@@ -90,17 +90,18 @@ main:
 
 	mov [ebr_drive_number],dl 
 
-	mov ax,1  		;LBA=1
-	mov cl,1  		;1 sector to read
-	mov bx,0x7E00	;data should be after bootloader
+	mov ax,1  			;LBA=1
+	mov cl,1  			;1 sector to read
+	mov bx,0x7E00		;data should be after bootloader
 	call disk_read
 
 	; Call the puts subroutine to print our message
-	mov si, msg_hello ; Load the address (offset) of msg_hello into SI
-	call puts         ; Call the puts subroutine
+	mov si, msg_hello 	; Load the address (offset) of msg_hello into SI
+	call puts         	; Call the puts subroutine
 
-	hlt ; Halt the CPU - wait for interrupts.
-        ; This is effectively the end of our boot sector's active execution.
+	cli				  	;disable interrupts
+	hlt 				; Halt the CPU - wait for interrupts.
+        				; This is effectively the end of our boot sector's active execution.
 floppy_error:
 	mov si,read_msg_failed
 	call puts
